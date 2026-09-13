@@ -20,11 +20,13 @@ FEATURE_COLUMNS = [
     "legal_dispute",
     "approval_stage",
     "stakeholder_responsiveness",
+    "possession_status",
     "land_area_hectares",
     "affected_families",
     "rehabilitation_progress_pct",
     "historical_dept_performance_score",
     "months_since_initiation",
+    "approval_timeline_days",
 ]
 
 
@@ -35,8 +37,8 @@ CATEGORICAL_FEATURES = [
     "legal_dispute",
     "approval_stage",
     "stakeholder_responsiveness",
+    "possession_status"
 ]
-
 
 NUMERICAL_FEATURES = [
     "land_area_hectares",
@@ -44,6 +46,7 @@ NUMERICAL_FEATURES = [
     "rehabilitation_progress_pct",
     "historical_dept_performance_score",
     "months_since_initiation",
+    "approval_timeline_days"
 ]
 
 

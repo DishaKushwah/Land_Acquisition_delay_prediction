@@ -43,11 +43,12 @@ class ProjectCreate(BaseModel):
     compensation_status: str
     legal_dispute: str
     approval_stage: str
-    rehabilitation_progress_pct: int
+    possession_status: str
+    rehabilitation_progress_pct: float
     stakeholder_responsiveness: str
     historical_dept_performance_score: float
-    months_since_initiation: int
-
+    months_since_initiation: float
+    approval_timeline_days: int
 
 class ProjectOut(ProjectCreate):
     id: uuid.UUID

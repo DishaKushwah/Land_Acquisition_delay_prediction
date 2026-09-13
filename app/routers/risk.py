@@ -22,18 +22,20 @@ def predict_project_risk(
         raise HTTPException(status_code=404, detail="Project not found")
 
     features = {
-        "state": project.state,
-        "project_type": project.project_type,
-        "compensation_status": project.compensation_status,
-        "legal_dispute": project.legal_dispute,
-        "approval_stage": project.approval_stage,
-        "stakeholder_responsiveness": project.stakeholder_responsiveness,
-        "land_area_hectares": project.land_area_hectares,
-        "affected_families": project.affected_families,
-        "rehabilitation_progress_pct": project.rehabilitation_progress_pct,
-        "historical_dept_performance_score": project.historical_dept_performance_score,
-        "months_since_initiation": project.months_since_initiation,
-    }
+    "state": project.state,
+    "project_type": project.project_type,
+    "land_area_hectares": project.land_area_hectares,
+    "affected_families": project.affected_families,
+    "compensation_status": project.compensation_status,
+    "legal_dispute": project.legal_dispute,
+    "approval_stage": project.approval_stage,
+    "possession_status": project.possession_status,
+    "rehabilitation_progress_pct": project.rehabilitation_progress_pct,
+    "stakeholder_responsiveness": project.stakeholder_responsiveness,
+    "historical_dept_performance_score": project.historical_dept_performance_score,
+    "months_since_initiation": project.months_since_initiation,
+    "approval_timeline_days": project.approval_timeline_days,
+}
 
     analysis = analyze_risk(features)
 

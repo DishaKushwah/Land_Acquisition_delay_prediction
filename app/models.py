@@ -36,6 +36,8 @@ class Project(Base):
     state = Column(String, nullable=False, index=True)
     district = Column(String, nullable=False)
     project_type = Column(String, nullable=False)
+    approval_timeline_days = Column(Integer)
+    possession_status = Column(String)
 
     land_area_hectares = Column(Float, nullable=False)
     affected_families = Column(Integer, nullable=False)

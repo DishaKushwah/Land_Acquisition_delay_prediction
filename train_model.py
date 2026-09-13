@@ -20,7 +20,7 @@ from xgboost import XGBClassifier
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = (BASE_DIR/ "data"/ "land_acquisition_synthetic_forTuning.csv")
+DATA_PATH = (BASE_DIR/ "data"/ "land_acquisition_synthetic_newFeat.csv")
 df = pd.read_csv(DATA_PATH)
 
 print("Dataset shape:", df.shape)
@@ -61,7 +61,8 @@ categorical_features = [
     "compensation_status",
     "legal_dispute",
     "approval_stage",
-    "stakeholder_responsiveness"
+    "stakeholder_responsiveness",
+    "possession_status"
 ]
 
 numerical_features = [
@@ -69,7 +70,8 @@ numerical_features = [
     "affected_families",
     "rehabilitation_progress_pct",
     "historical_dept_performance_score",
-    "months_since_initiation"
+    "months_since_initiation",
+    "approval_timeline_days"
 ]
 
 preprocessor = ColumnTransformer(
