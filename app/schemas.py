@@ -61,9 +61,24 @@ class ProjectOut(ProjectCreate):
         from_attributes = True
 
 
+class DelayDriver(BaseModel):
+    feature: str
+    shap_value: float
+    impact: str
+
+
+class StageRisk(BaseModel):
+    delay_probability: float
+    risk_category: str
+    delay_prediction: str
+
+
 class RiskPredictionOut(BaseModel):
     project_id: uuid.UUID
     project_code: str
     delay_probability: float
     risk_category: str
-    top_delay_drivers: list[str]
+    delay_prediction: str
+    top_delay_drivers: list[DelayDriver]
+    recommendations: list[str]
+    stage_risks: dict[str, StageRisk]

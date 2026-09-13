@@ -7,8 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
 from app.auth import get_current_user
-from app.ml.risk_model import predict_risk
-
+from app.ml.risk_model import analyze_risk
 router = APIRouter(prefix="/risk", tags=["risk"])
 
 
@@ -23,6 +22,7 @@ def predict_project_risk(
         raise HTTPException(status_code=404, detail="Project not found")
 
     features = {
+        "state": project.state,
         "project_type": project.project_type,
         "compensation_status": project.compensation_status,
         "legal_dispute": project.legal_dispute,
@@ -35,21 +35,32 @@ def predict_project_risk(
         "months_since_initiation": project.months_since_initiation,
     }
 
-    probability, category, top_drivers = predict_risk(features)
+    analysis = analyze_risk(features)
+
+    probability = analysis["delay_probability"]
+    category = analysis["risk_category"]
+    top_drivers = analysis["top_delay_drivers"]
 
     project.delay_probability = probability
     project.risk_category = category
     project.risk_score = round(probability * 10, 2)
-    project.top_delay_drivers = ", ".join(top_drivers)
+
+    project.top_delay_drivers = ", ".join(
+        driver["feature"] for driver in top_drivers
+    )
+
     db.commit()
 
-    return schemas.RiskPredictionOut(
-        project_id=project.id,
-        project_code=project.project_code,
-        delay_probability=probability,
-        risk_category=category,
-        top_delay_drivers=top_drivers,
-    )
+    return {
+        "project_id": project.id,
+        "project_code": project.project_code,
+        "delay_probability": probability,
+        "risk_category": category,
+        "delay_prediction": analysis["delay_prediction"],
+        "top_delay_drivers": top_drivers,
+        "recommendations": analysis["recommendations"],
+        "stage_risks": analysis["stage_risks"],
+    }
 
 
 @router.get("/high-risk", response_model=List[schemas.ProjectOut])

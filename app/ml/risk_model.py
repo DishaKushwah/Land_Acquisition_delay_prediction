@@ -1,76 +1,321 @@
-import os
+from pathlib import Path
+from app.ml.recommendations import generate_recommendations 
+from app.ml.stage_prediction import predict_stage_risks
 import joblib
+import numpy as np
 import pandas as pd
+import xgboost as xgb
 
-_MODEL_PATH = os.path.join(os.path.dirname(__file__), "xgb_risk_model.joblib")
-_EXPLAINER_PATH = os.path.join(os.path.dirname(__file__), "shap_explainer.joblib")
-_COLUMNS_PATH = os.path.join(os.path.dirname(__file__), "feature_columns.joblib")
 
-CATEGORICAL_COLS = [
-    "project_type", "compensation_status", "legal_dispute",
-    "approval_stage", "stakeholder_responsiveness",
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "risk_model.joblib"
+
+model = joblib.load(MODEL_PATH)
+
+
+FEATURE_COLUMNS = [
+    "state",
+    "project_type",
+    "compensation_status",
+    "legal_dispute",
+    "approval_stage",
+    "stakeholder_responsiveness",
+    "land_area_hectares",
+    "affected_families",
+    "rehabilitation_progress_pct",
+    "historical_dept_performance_score",
+    "months_since_initiation",
 ]
-NUMERIC_COLS = [
-    "land_area_hectares", "affected_families", "rehabilitation_progress_pct",
-    "historical_dept_performance_score", "months_since_initiation",
+
+
+CATEGORICAL_FEATURES = [
+    "state",
+    "project_type",
+    "compensation_status",
+    "legal_dispute",
+    "approval_stage",
+    "stakeholder_responsiveness",
 ]
 
-_model = None
-_explainer = None
-_feature_columns = None
+
+NUMERICAL_FEATURES = [
+    "land_area_hectares",
+    "affected_families",
+    "rehabilitation_progress_pct",
+    "historical_dept_performance_score",
+    "months_since_initiation",
+]
 
 
-def _load_artifacts():
-    global _model, _explainer, _feature_columns
-    if _model is None:
-        if not os.path.exists(_MODEL_PATH):
-            raise RuntimeError(
-                "Model artifacts not found. Run `python train_model.py` from the "
-                "backend root before starting the API."
+PREDICTION_THRESHOLD = 0.40
+HIGH_RISK_THRESHOLD = 0.70
+MEDIUM_RISK_THRESHOLD = 0.40
+
+
+def get_risk_category(probability: float) -> str:
+    """
+    Convert delay probability into a risk category.
+    """
+    if probability >= HIGH_RISK_THRESHOLD:
+        return "HIGH"
+
+    if probability >= MEDIUM_RISK_THRESHOLD:
+        return "MEDIUM"
+
+    return "LOW"
+
+
+def predict_risk(project_data: dict) -> dict:
+    """
+    Predict delay probability for a single project.
+    """
+    features = pd.DataFrame(
+        [project_data],
+        columns=FEATURE_COLUMNS
+    )
+
+    # Predict probability of Delayed
+    delay_probability = float(
+        model.predict_proba(features)[0][1]
+    )
+
+    # Convert probability into risk category
+    risk_category = get_risk_category(delay_probability)
+
+    # Apply operational prediction threshold
+    delay_prediction = (
+        "Delayed"
+        if delay_probability >= PREDICTION_THRESHOLD
+        else "On-Time"
+    )
+
+    return {
+        "delay_probability": delay_probability,
+        "risk_category": risk_category,
+        "delay_prediction": delay_prediction,
+    }
+
+
+# ============================================================
+# EXPLAINABILITY
+# ============================================================
+#
+# We use XGBoost's native feature contributions instead of
+# the SHAP Python package.
+#
+# This avoids the SciPy dependency that is currently blocked
+# by Windows Application Control on this machine.
+#
+# The contribution values are in the model's prediction
+# space (log-odds). Positive values increase delay risk,
+# negative values decrease delay risk.
+# ============================================================
+
+classifier = model.named_steps["classifier"]
+preprocessor = model.named_steps["preprocessor"]
+
+FEATURE_DISPLAY_NAMES = {
+    "compensation_status": "Compensation Status",
+    "legal_dispute": "Legal Dispute",
+    "stakeholder_responsiveness": "Stakeholder Responsiveness",
+    "months_since_initiation": "Months Since Initiation",
+    "land_area_hectares": "Land Area",
+    "affected_families": "Affected Families",
+    "rehabilitation_progress_pct": "Rehabilitation Progress",
+    "historical_dept_performance_score": "Department Performance",
+    "approval_stage": "Approval Stage",
+    "project_type": "Project Type",
+    "state": "State",
+}
+
+
+def get_grouped_shap(project_data: dict) -> list:
+    """
+    Calculate XGBoost native feature contributions and group
+    one-hot encoded features back into their original features.
+
+    The returned values represent contribution toward the
+    model's delay prediction:
+
+        positive -> increases delay risk
+        negative -> reduces delay risk
+
+    Returns:
+        List sorted by absolute contribution.
+    """
+
+    features = pd.DataFrame(
+        [project_data],
+        columns=FEATURE_COLUMNS
+    )
+
+    # Apply the exact preprocessing used during training
+    transformed_features = preprocessor.transform(features)
+
+    transformed_feature_names = (
+        preprocessor.get_feature_names_out()
+    )
+
+    # XGBoost native feature contributions
+    dmatrix = xgb.DMatrix(
+        transformed_features,
+        feature_names=list(transformed_feature_names)
+    )
+
+    contributions = classifier.get_booster().predict(
+        dmatrix,
+        pred_contribs=True
+    )
+
+    contributions = np.asarray(contributions)
+
+    # One project -> first row
+    if contributions.ndim == 2:
+        contributions = contributions[0]
+
+    # Last value is the XGBoost bias/base contribution.
+    feature_contributions = contributions[:-1]
+
+    grouped_contributions = {}
+
+    for feature_name, contribution in zip(
+        transformed_feature_names,
+        feature_contributions
+    ):
+        # Remove ColumnTransformer prefix
+        #
+        # Example:
+        # categorical__compensation_status_Pending
+        #
+        # becomes:
+        # compensation_status_Pending
+        clean_name = feature_name.split(
+            "__",
+            1
+        )[-1]
+
+        original_feature = None
+
+        # Match categorical one-hot features
+        for feature in CATEGORICAL_FEATURES:
+
+            if clean_name.startswith(feature + "_"):
+                original_feature = feature
+                break
+
+        # Match numerical features
+        if original_feature is None:
+
+            for feature in NUMERICAL_FEATURES:
+
+                if clean_name == feature:
+                    original_feature = feature
+                    break
+
+        # Fallback
+        if original_feature is None:
+            original_feature = clean_name
+
+        grouped_contributions[original_feature] = (
+            grouped_contributions.get(
+                original_feature,
+                0.0
             )
-        _model = joblib.load(_MODEL_PATH)
-        _explainer = joblib.load(_EXPLAINER_PATH)
-        _feature_columns = joblib.load(_COLUMNS_PATH)
+            + float(contribution)
+        )
+
+    results = []
+
+    for feature, value in grouped_contributions.items():
+
+        results.append(
+            {
+                "feature": feature,
+                "shap_value": round(value, 4),
+                "impact": (
+                    "increases delay risk"
+                    if value > 0
+                    else "reduces delay risk"
+                ),
+            }
+        )
+
+    # Strongest contributors first
+    results.sort(
+        key=lambda x: abs(x["shap_value"]),
+        reverse=True
+    )
+
+    return results
 
 
-def _vectorize(project: dict) -> pd.DataFrame:
-    row = {col: project[col] for col in CATEGORICAL_COLS + NUMERIC_COLS}
-    df = pd.DataFrame([row])
-    df = pd.get_dummies(df, columns=CATEGORICAL_COLS)
-    # align to the exact training-time column order; any category not seen
-    # during training (e.g. a new project_type) safely maps to all-zero dummies
-    df = df.reindex(columns=_feature_columns, fill_value=0)
-    return df
-
-
-def predict_risk(project: dict, top_n_drivers: int = 3):
+def get_top_delay_drivers(
+    project_data: dict,
+    top_n: int = 5
+) -> list:
     """
-    project: dict with keys matching CATEGORICAL_COLS + NUMERIC_COLS
-    Returns: (delay_probability: float, risk_category: str, top_drivers: list[str])
+    Return the strongest delay-risk contributors for a project.
     """
-    _load_artifacts()
-    X = _vectorize(project)
 
-    probability = float(_model.predict_proba(X)[0][1])
+    grouped_shap = get_grouped_shap(project_data)
 
-    if probability >= 0.65:
-        category = "High"
-    elif probability >= 0.35:
-        category = "Medium"
-    else:
-        category = "Low"
+    top_drivers = []
 
-    shap_values = _explainer.shap_values(X)
-    contributions = pd.Series(shap_values[0], index=X.columns).abs().sort_values(ascending=False)
-    top_drivers = [_humanize_feature(f) for f in contributions.head(top_n_drivers).index]
+    for item in grouped_shap[:top_n]:
 
-    return probability, category, top_drivers
+        feature = item["feature"]
+
+        display_name = FEATURE_DISPLAY_NAMES.get(
+            feature,
+            feature.replace("_", " ").title()
+        )
+
+        top_drivers.append(
+            {
+                "feature": display_name,
+                "shap_value": item["shap_value"],
+                "impact": item["impact"],
+            }
+        )
+
+    return top_drivers
 
 
-def _humanize_feature(feature_name: str) -> str:
-    """Turns a one-hot column like 'compensation_status_Pending' into 'compensation status: pending'."""
-    for col in CATEGORICAL_COLS:
-        if feature_name.startswith(col + "_"):
-            value = feature_name[len(col) + 1:]
-            return f"{col.replace('_', ' ')}: {value.lower()}"
-    return feature_name.replace("_", " ")
+def analyze_risk(project_data: dict) -> dict:
+    """
+    Complete ML analysis for a project.
+
+    Returns:
+        - overall delay probability
+        - overall risk category
+        - overall delay prediction
+        - top delay drivers
+        - actionable recommendations
+        - stage-wise delay predictions
+    """
+
+    # Overall prediction
+    prediction = predict_risk(project_data)
+
+    # Explainability
+    top_drivers = get_top_delay_drivers(
+        project_data
+    )
+
+    # Recommendations
+    recommendations = generate_recommendations(
+        project_data,
+        prediction["delay_probability"]
+    )
+
+    # Stage-wise prediction
+    stage_risks = predict_stage_risks(
+        project_data
+    )
+
+    return {
+        **prediction,
+        "top_delay_drivers": top_drivers,
+        "recommendations": recommendations,
+        "stage_risks": stage_risks,
+    }
